@@ -489,128 +489,88 @@ function displaySTL(stlData) {
   controls.update();
 }
 
-// ── WASM Rendering ──────────────────────────────────────
-// This function is where the real OpenSCAD WASM binary would be called.
-// During GSoC, this would be replaced with the actual WASM invocation:
-//   const result = await openscad(['--export-format=binstl', input, '-o', output]);
-// For this demo we generate a parametric STL from the parsed SCAD geometry.
+// ── WASM Rendering (Real Engine Integration) ──────────────
+const WORKER_CODE = `
+// Calculate base URL to correctly resolve relative paths in the worker
+const baseUrl = location.origin + location.pathname.substring(0, location.pathname.lastIndexOf('/'));
 
-function generateDemoSTL(scadCode) {
-  // Parse key primitives from SCAD to demonstrate the concept
-  // In the full implementation, OpenSCAD WASM runs the real compiler
-  let shape = 'difference';
-  let hasSphere = /sphere\s*\(/.test(scadCode);
-  let hasCylinder = /cylinder\s*\(/.test(scadCode);
-  let hasCube = /cube\s*\(/.test(scadCode);
-  let hasUnion = /union\s*\(/.test(scadCode);
-  let hasDiff = /difference\s*\(/.test(scadCode);
+// Load the official Emscripten JS wrapper
+importScripts(baseUrl + '/wasm/openscad.js');
 
-  const geom = new THREE.BufferGeometry();
+let instance = null;
 
-  if (hasSphere && hasCylinder && hasDiff) {
-    // Difference of sphere and cylinder — show as ring-like shape
-    const sphere = new THREE.SphereGeometry(20, 32, 32);
-    const cyl = new THREE.CylinderGeometry(6, 6, 50, 32);
-    // Merge for visual approximation
-    sphere.computeVertexNormals();
-    return sphere; // Return just sphere as closest visual
-  } else if (hasCube) {
-    return new THREE.BoxGeometry(20, 20, 20);
-  } else if (hasSphere) {
-    return new THREE.SphereGeometry(20, 32, 32);
-  } else if (hasCylinder) {
-    return new THREE.CylinderGeometry(10, 10, 30, 32);
+onmessage = async function(e) {
+  const scadCode = e.data;
+  
+  try {
+    if (!instance) {
+      instance = await OpenSCAD({
+        noInitialRun: true,
+        print: text => console.log('OpenSCAD stdout:', text),
+        printErr: text => console.error('OpenSCAD stderr:', text),
+        locateFile: (path, prefix) => baseUrl + '/wasm/' + path
+      });
+    }
+
+    // Write the input script to the virtual filesystem
+    instance.FS.writeFile('/input.scad', scadCode);
+
+    // Call the OpenSCAD compiler to output a binary STL
+    const exitCode = instance.callMain(['--export-format=binstl', '/input.scad', '-o', '/output.stl']);
+    
+    if (exitCode !== 0) {
+      throw new Error('OpenSCAD compiled with exit code ' + exitCode);
+    }
+
+    // Read the binary STL from the virtual filesystem
+    const stlData = instance.FS.readFile('/output.stl');
+    
+    // Transfer the ArrayBuffer back to the main thread for max performance
+    postMessage({ success: true, stlData: stlData.buffer }, [stlData.buffer]);
+  } catch (err) {
+    postMessage({ success: false, error: err.message || err.toString() });
   }
-  return new THREE.SphereGeometry(15, 32, 32);
-}
+};
+`;
+
+const workerBlob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+const wasmWorker = new Worker(URL.createObjectURL(workerBlob));
 
 function renderSCAD(scadCode) {
   const overlay = document.getElementById('loading-overlay');
   const loadTxt = document.getElementById('loading-text');
   overlay.classList.add('show');
-  loadTxt.textContent = 'Rendering…';
-  setStatus('busy', 'Rendering with OpenSCAD WASM…');
+  loadTxt.textContent = 'Compiling via WASM…';
+  setStatus('busy', 'Compiling with real OpenSCAD WASM engine…');
 
-  // Simulate WASM render time
-  setTimeout(() => {
-    try {
-      const geometry = generateDemoSTL(scadCode);
-      geometry.computeVertexNormals();
-      geometry.center();
-
-      const material = new THREE.MeshPhongMaterial({
-        color: 0xff6b35,
-        specular: 0x334466,
-        shininess: 60,
-        side: THREE.DoubleSide,
-      });
-
-      if (modelMesh) scene.remove(modelMesh);
-      modelMesh = new THREE.Mesh(geometry, material);
-      scene.add(modelMesh);
-
-      // Fit camera
-      const box = new THREE.Box3().setFromObject(modelMesh);
-      const size = box.getSize(new THREE.Vector3()).length();
-      const center = box.getCenter(new THREE.Vector3());
-      controls.target.copy(center);
-      camera.position.copy(center).add(new THREE.Vector3(size, size * 0.6, size));
-      camera.near = size / 100;
-      camera.far = size * 10;
-      camera.updateProjectionMatrix();
-      controls.update();
-
-      // Generate STL for download
-      currentSTLBlob = generateSTLBlob(geometry);
+  wasmWorker.onmessage = function(e) {
+    const res = e.data;
+    if (res.success) {
+      // res.stlData is an ArrayBuffer containing a real STL file
+      displaySTL(res.stlData);
+      
+      // Prepare STL for download
+      currentSTLBlob = new Blob([res.stlData], { type: 'application/octet-stream' });
       document.getElementById('download-btn').disabled = false;
-
+      
       overlay.classList.remove('show');
-      setStatus('ok', 'Render complete — model ready');
-
-      // Switch to viewer tab
+      setStatus('ok', 'Render complete — real STL generated');
       activateTab('viewer');
-    } catch (e) {
+    } else {
       overlay.classList.remove('show');
-      setStatus('err', 'Render error: ' + e.message);
+      setStatus('err', 'Compilation failed: ' + res.error);
     }
-  }, 800);
+  };
+
+  wasmWorker.onerror = function(err) {
+    overlay.classList.remove('show');
+    setStatus('err', 'Worker error: ' + err.message);
+  };
+
+  // Dispatch the source code to the background compilation thread
+  wasmWorker.postMessage(scadCode);
 }
 
-// ── STL Export ──────────────────────────────────────────
-function generateSTLBlob(geometry) {
-  const geom = geometry.clone();
-  geom.computeVertexNormals();
-  if (!geom.index) geom.toNonIndexed();
-
-  const pos = geom.attributes.position;
-  const nor = geom.attributes.normal;
-  const triCount = pos.count / 3;
-
-  const buf = new ArrayBuffer(84 + triCount * 50);
-  const view = new DataView(buf);
-
-  // 80-byte header
-  for (let i = 0; i < 80; i++) view.setUint8(i, 0);
-  view.setUint32(80, triCount, true);
-
-  let offset = 84;
-  for (let i = 0; i < triCount; i++) {
-    const base = i * 3;
-    // Normal
-    view.setFloat32(offset,     nor.getX(base), true); offset += 4;
-    view.setFloat32(offset,     nor.getY(base), true); offset += 4;
-    view.setFloat32(offset,     nor.getZ(base), true); offset += 4;
-    // 3 vertices
-    for (let v = 0; v < 3; v++) {
-      view.setFloat32(offset, pos.getX(base + v), true); offset += 4;
-      view.setFloat32(offset, pos.getY(base + v), true); offset += 4;
-      view.setFloat32(offset, pos.getZ(base + v), true); offset += 4;
-    }
-    view.setUint16(offset, 0, true); offset += 2; // attribute byte count
-  }
-
-  return new Blob([buf], { type: 'application/octet-stream' });
-}
 
 // ── URL-based Script Loading ──────────────────────────────
 // Core feature from t-paul's spec: ?script=URL loads a remote .scad file
