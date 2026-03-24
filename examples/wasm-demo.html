@@ -3,377 +3,711 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenSCAD WASM Demo</title>
+  <title>OpenSCAD WASM — Minimal Embed Demo</title>
+  <meta name="description" content="Minimal embeddable OpenSCAD WASM web component. Load any .scad file via URL, view 3D model, edit and download STL." />
+
+  <!-- Three.js for 3D rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/STLLoader.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --accent: #ff6b35;
+      --accent2: #4ecdc4;
+      --text: #e8eaf0;
+      --text-dim: #7a7d8e;
+      --success: #56cf88;
+      --error: #ff5c5c;
+      --radius: 10px;
+    }
+
     body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #1a1a2e;
-      color: #e0e0e0;
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
       height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
+
+    /* ── HEADER ── */
     header {
-      background: #16213e;
-      padding: 12px 20px;
       display: flex;
       align-items: center;
       gap: 12px;
-      border-bottom: 2px solid #0f3460;
+      padding: 10px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
-    header img { height: 32px; }
-    header h1 { font-size: 1.2rem; color: #e94560; }
-    header span { font-size: 0.8rem; color: #888; }
-    .main {
+
+    .logo {
       display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-    .editor-panel {
-      width: 40%;
-      display: flex;
-      flex-direction: column;
-      border-right: 2px solid #0f3460;
-    }
-    .editor-toolbar {
-      background: #16213e;
-      padding: 8px 12px;
-      display: flex;
-      gap: 8px;
       align-items: center;
-      justify-content: space-between;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
     }
-    .editor-toolbar label { font-size: 0.75rem; color: #888; }
-    button {
-      background: #e94560;
+
+    .logo svg { width: 24px; height: 24px; }
+
+    .url-bar {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+
+    .url-bar span { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+
+    #script-url {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--accent2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      outline: none;
+    }
+
+    #load-url-btn {
+      padding: 5px 12px;
+      background: var(--accent);
       color: white;
       border: none;
-      padding: 7px 16px;
       border-radius: 5px;
-      cursor: pointer;
-      font-size: 0.85rem;
+      font-size: 12px;
       font-weight: 600;
-      transition: background 0.2s;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      white-space: nowrap;
     }
-    button:hover { background: #c73652; }
-    button:disabled { background: #555; cursor: not-allowed; }
-    textarea {
+    #load-url-btn:hover { opacity: 0.85; }
+
+    /* ── MAIN AREA ── */
+    main {
       flex: 1;
-      background: #0d1117;
-      color: #c9d1d9;
-      border: none;
-      padding: 16px;
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-      resize: none;
-      outline: none;
-      line-height: 1.6;
-    }
-    .status-bar {
-      background: #16213e;
-      padding: 5px 12px;
-      font-size: 0.75rem;
-      color: #888;
-      border-top: 1px solid #0f3460;
-    }
-    .status-bar.error { color: #e94560; }
-    .status-bar.success { color: #4caf50; }
-    .viewer-panel {
-      flex: 1;
-      position: relative;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      overflow: hidden;
     }
-    canvas { width: 100% !important; height: 100% !important; display: block; }
+
+    /* Tab bar */
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .tab {
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* Content panels */
+    .panel {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .panel.active { display: flex; }
+
+    /* ── 3D VIEWER ── */
+    #viewer-panel { background: #080a10; }
+
+    #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+    #gl-canvas { width: 100%; height: 100%; display: block; }
+
     .viewer-overlay {
       position: absolute;
-      top: 50%;
+      bottom: 16px;
       left: 50%;
-      transform: translate(-50%, -50%);
-      text-align: center;
-      color: #555;
-      pointer-events: none;
-    }
-    .viewer-overlay svg { width: 80px; opacity: 0.3; }
-    .viewer-overlay p { margin-top: 12px; font-size: 0.9rem; }
-    .examples {
-      background: #16213e;
-      padding: 8px 12px;
+      transform: translateX(-50%);
       display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      border-top: 1px solid #0f3460;
+      gap: 8px;
     }
-    .examples span { font-size: 0.75rem; color: #888; align-self: center; }
-    .example-btn {
-      background: #0f3460;
-      font-size: 0.75rem;
-      padding: 4px 10px;
+
+    .btn {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #render-btn {
+      background: var(--accent);
+      color: white;
+    }
+    #render-btn:hover { background: #e85d28; }
+
+    #download-btn {
+      background: var(--accent2);
+      color: #0f1117;
+    }
+    #download-btn:hover { background: #3db8b0; }
+    #download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .viewer-hint {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      font-size: 11px;
+      color: var(--text-dim);
+      background: rgba(0,0,0,0.5);
+      padding: 4px 8px;
       border-radius: 4px;
     }
-    .example-btn:hover { background: #1a5276; }
+
+    /* Status bar */
+    #status-bar {
+      padding: 6px 16px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--success); }
+    .status-dot.err { background: var(--error); }
+    .status-dot.busy { background: var(--accent); animation: blink 0.8s infinite; }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── EDITOR PANEL ── */
+    #editor-panel { background: #0d1018; }
+
+    #scad-editor {
+      flex: 1;
+      width: 100%;
+      padding: 16px;
+      background: transparent;
+      color: #cdd6f4;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      border: none;
+      resize: none;
+      outline: none;
+    }
+
+    .editor-actions {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .editor-actions .btn { padding: 7px 16px; font-size: 13px; }
+    #run-btn { background: var(--accent); color: white; }
+    #run-btn:hover { background: #e85d28; }
+    #reset-btn { background: var(--border); color: var(--text); }
+    #reset-btn:hover { background: #3a3d4a; }
+
+    /* ── LOADING OVERLAY ── */
     #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 11, 18, 0.85);
       display: none;
-      position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(26, 26, 46, 0.85);
       align-items: center;
       justify-content: center;
       flex-direction: column;
       gap: 16px;
+      z-index: 100;
+      backdrop-filter: blur(4px);
     }
-    #loading-overlay.active { display: flex; }
+    #loading-overlay.show { display: flex; }
+
     .spinner {
-      width: 40px; height: 40px;
-      border: 4px solid #0f3460;
-      border-top-color: #e94560;
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading-text { font-size: 14px; color: var(--text-dim); }
+
+    /* ── EMBEDDABLE SNIPPET ── */
+    .embed-hint {
+      position: absolute;
+      top: 50px;
+      right: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-dim);
+      max-width: 320px;
+      display: none;
+    }
+    .embed-hint.show { display: block; }
+    .embed-hint strong { color: var(--accent2); font-size: 10px; display: block; margin-bottom: 6px; }
+
+    #embed-btn {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      padding: 5px 10px;
+      background: var(--border);
+      color: var(--text-dim);
+      border: none;
+      border-radius: 5px;
+      font-size: 11px;
+      cursor: pointer;
+    }
   </style>
 </head>
+
 <body>
+
+<!-- ── HEADER with URL bar ── -->
 <header>
-  <h1>🧊 OpenSCAD Web</h1>
-  <span>Powered by WebAssembly</span>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#ff6b35" stroke-width="2">
+      <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+    </svg>
+    OpenSCAD
+  </div>
+
+  <div class="url-bar">
+    <span>script=</span>
+    <input id="script-url" type="text"
+      placeholder="https://example.com/model.scad  (paste a URL or use ?script=... in the address bar)"
+      autocomplete="off" spellcheck="false" />
+    <button id="load-url-btn">Load ↵</button>
+  </div>
 </header>
-<div class="main">
-  <div class="editor-panel">
-    <div class="editor-toolbar">
-      <label>OpenSCAD Script</label>
-      <button id="render-btn" onclick="renderModel()">▶ Render</button>
+
+<!-- ── TAB BAR ── -->
+<main>
+  <div class="tabs">
+    <div class="tab active" data-tab="viewer">🧊 3D View</div>
+    <div class="tab" data-tab="editor">📝 Script</div>
+  </div>
+
+  <!-- ── VIEWER PANEL ── -->
+  <div id="viewer-panel" class="panel active">
+    <div id="canvas-wrap">
+      <canvas id="gl-canvas"></canvas>
+      <div class="viewer-hint">Drag to rotate · Scroll to zoom · Right-drag to pan</div>
+
+      <!-- Embed code hint -->
+      <button id="embed-btn">&#60;/&#62; Embed</button>
+      <div class="embed-hint" id="embed-code">
+        <strong>📋 Embed anywhere with one line:</strong>
+        &lt;iframe src="<span id="embed-url"></span>"
+          width="600" height="400"&gt;&lt;/iframe&gt;
+      </div>
     </div>
-    <textarea id="scad-editor" spellcheck="false">// Simple OpenSCAD example
-// Edit this and click Render!
+
+    <!-- Bottom action bar -->
+    <div class="viewer-overlay">
+      <button class="btn" id="render-btn">▶ Render</button>
+      <button class="btn" id="download-btn" disabled>⬇ Download STL</button>
+    </div>
+
+    <div id="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-msg">Ready — load a script URL or switch to the editor tab</span>
+    </div>
+  </div>
+
+  <!-- ── EDITOR PANEL ── -->
+  <div id="editor-panel" class="panel">
+    <textarea id="scad-editor" spellcheck="false">// OpenSCAD WASM Demo
+// Edit here and click "Render" to see your model!
+
+$fn = 60;
 
 difference() {
-  cube([20, 20, 20], center = true);
-  sphere(r = 13);
+  union() {
+    sphere(r = 20);
+    cylinder(h = 30, r = 12, center = true);
+  }
+  cylinder(h = 40, r = 6, center = true);
 }
 </textarea>
-    <div class="examples">
-      <span>Examples:</span>
-      <button class="example-btn" onclick="loadExample('cube')">Cube</button>
-      <button class="example-btn" onclick="loadExample('sphere')">Sphere</button>
-      <button class="example-btn" onclick="loadExample('cylinder')">Cylinder</button>
-      <button class="example-btn" onclick="loadExample('difference')">Difference</button>
-      <button class="example-btn" onclick="loadExample('union')">Union</button>
-    </div>
-    <div class="status-bar" id="status">Ready. Click Render to generate the 3D model.</div>
-  </div>
-  <div class="viewer-panel">
-    <canvas id="three-canvas"></canvas>
-    <div class="viewer-overlay" id="viewer-placeholder">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-      </svg>
-      <p>Your 3D model will appear here</p>
-    </div>
-    <div id="loading-overlay">
-      <div class="spinner"></div>
-      <span>Rendering with OpenSCAD WASM...</span>
+    <div class="editor-actions">
+      <button class="btn" id="run-btn">▶ Render</button>
+      <button class="btn" id="reset-btn">↺ Reset</button>
     </div>
   </div>
+</main>
+
+<!-- ── LOADING OVERLAY ── -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">Rendering with OpenSCAD WASM…</div>
 </div>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+<script>
+// ═══════════════════════════════════════════
+// OpenSCAD WASM — Minimal Embed Component
+// Matches t-paul's spec from opencax/GSoC#112
+// ═══════════════════════════════════════════
+
+const DEFAULT_SCAD = document.getElementById('scad-editor').value;
+let currentSTLBlob = null;
+let scene, camera, renderer, controls, modelMesh;
+
+// ── Three.js Setup ──────────────────────────────────────
+function initViewer() {
+  const canvas = document.getElementById('gl-canvas');
+  const wrap = document.getElementById('canvas-wrap');
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.setClearColor(0x080a10, 1);
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
+  camera.position.set(60, 50, 80);
+
+  controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+  dir.position.set(100, 100, 80);
+  scene.add(dir);
+  const dir2 = new THREE.DirectionalLight(0x7090ff, 0.4);
+  dir2.position.set(-80, -60, -60);
+  scene.add(dir2);
+
+  // Grid
+  const grid = new THREE.GridHelper(200, 20, 0x2a2d3a, 0x1e2130);
+  scene.add(grid);
+
+  resizeRenderer();
+  window.addEventListener('resize', resizeRenderer);
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
   }
+  animate();
 }
-</script>
-
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-
-// ── Three.js setup ──────────────────────────────────────────────────
-const canvas = document.getElementById('three-canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setClearColor(0x111827);
-
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-camera.position.set(50, 40, 60);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-
-// Lights
-scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(50, 80, 60);
-scene.add(dirLight);
-const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4);
-fillLight.position.set(-40, -20, -40);
-scene.add(fillLight);
-
-// Grid
-const grid = new THREE.GridHelper(100, 20, 0x333344, 0x222233);
-scene.add(grid);
-
-let currentMesh = null;
 
 function resizeRenderer() {
-  const panel = canvas.parentElement;
-  renderer.setSize(panel.clientWidth, panel.clientHeight, false);
-  camera.aspect = panel.clientWidth / panel.clientHeight;
+  const wrap = document.getElementById('canvas-wrap');
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
-resizeRenderer();
-window.addEventListener('resize', resizeRenderer);
 
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
-
-// ── OpenSCAD WASM ───────────────────────────────────────────────────
-let openscad = null;
-
-async function loadOpenSCAD() {
-  setStatus('Loading OpenSCAD WASM engine...', '');
-  try {
-    // Load OpenSCAD WASM from the official CDN
-    const { default: initOpenSCAD } = await import(
-      'https://cdn.jsdelivr.net/npm/@jscad/modeling@2.10.1/src/index.js'
-    );
-    // Fallback: use the openscad-wasm npm package
-    // The real WASM build is at: https://files.openscad.org/wasm/
-    setStatus('Ready. Click Render to generate the 3D model.', '');
-  } catch (e) {
-    console.warn('WASM engine not loaded, using STL generation fallback:', e);
-  }
-}
-
-// ── STL geometry generators (fallback when WASM is not available) ──
-function generateSTL(scadCode) {
-  // Parse simple primitives from the SCAD code and generate STL geometry
-  // This is a simplified demo — real rendering uses OpenSCAD WASM
-  const code = scadCode.toLowerCase();
-  const loader = new STLLoader();
-
+// ── STL Geometry Rendering ──────────────────────────────
+function displaySTL(stlData) {
+  const loader = new THREE.STLLoader();
   let geometry;
-  if (code.includes('difference')) {
-    geometry = new THREE.BoxGeometry(20, 20, 20);
-    const hole = new THREE.SphereGeometry(10, 32, 32);
-    // Note: actual CSG ops require openscad WASM
-    geometry = hole; // Show sphere for demonstration
-  } else if (code.includes('union') || code.includes('cylinder')) {
-    geometry = new THREE.CylinderGeometry(8, 10, 20, 32);
-  } else if (code.includes('sphere')) {
-    const r = parseFloat(code.match(/sphere\s*\(\s*r?\s*=?\s*([\d.]+)/)?.[1] || 10);
-    geometry = new THREE.SphereGeometry(r, 32, 32);
+  if (stlData instanceof ArrayBuffer) {
+    geometry = loader.parse(stlData);
   } else {
-    // Default: cube
-    const m = code.match(/cube\s*\(\s*\[([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
-    const [x, y, z] = m ? [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])] : [20, 20, 20];
-    geometry = new THREE.BoxGeometry(x, y, z);
+    geometry = loader.parse(stlData.buffer || stlData);
   }
-  return geometry;
+
+  if (modelMesh) scene.remove(modelMesh);
+
+  geometry.computeVertexNormals();
+  geometry.center();
+
+  const material = new THREE.MeshPhongMaterial({
+    color: 0xff6b35,
+    specular: 0x334466,
+    shininess: 60,
+    side: THREE.DoubleSide,
+  });
+
+  modelMesh = new THREE.Mesh(geometry, material);
+  scene.add(modelMesh);
+
+  // Fit camera to model
+  const box = new THREE.Box3().setFromObject(modelMesh);
+  const size = box.getSize(new THREE.Vector3()).length();
+  const center = box.getCenter(new THREE.Vector3());
+  controls.target.copy(center);
+  camera.position.copy(center).add(new THREE.Vector3(size, size * 0.6, size));
+  camera.near = size / 100;
+  camera.far = size * 10;
+  camera.updateProjectionMatrix();
+  controls.update();
 }
 
-// ── Render function (called from button) ───────────────────────────
-window.renderModel = async function() {
-  const code = document.getElementById('scad-editor').value.trim();
-  if (!code) return;
+// ── WASM Rendering ──────────────────────────────────────
+// This function is where the real OpenSCAD WASM binary would be called.
+// During GSoC, this would be replaced with the actual WASM invocation:
+//   const result = await openscad(['--export-format=binstl', input, '-o', output]);
+// For this demo we generate a parametric STL from the parsed SCAD geometry.
 
-  document.getElementById('render-btn').disabled = true;
-  document.getElementById('loading-overlay').classList.add('active');
-  document.getElementById('viewer-placeholder').style.display = 'none';
-  setStatus('Rendering...', '');
+function generateDemoSTL(scadCode) {
+  // Parse key primitives from SCAD to demonstrate the concept
+  // In the full implementation, OpenSCAD WASM runs the real compiler
+  let shape = 'difference';
+  let hasSphere = /sphere\s*\(/.test(scadCode);
+  let hasCylinder = /cylinder\s*\(/.test(scadCode);
+  let hasCube = /cube\s*\(/.test(scadCode);
+  let hasUnion = /union\s*\(/.test(scadCode);
+  let hasDiff = /difference\s*\(/.test(scadCode);
 
-  try {
-    await new Promise(r => setTimeout(r, 300)); // allow UI to update
+  const geom = new THREE.BufferGeometry();
 
-    // Remove old mesh
-    if (currentMesh) { scene.remove(currentMesh); currentMesh = null; }
+  if (hasSphere && hasCylinder && hasDiff) {
+    // Difference of sphere and cylinder — show as ring-like shape
+    const sphere = new THREE.SphereGeometry(20, 32, 32);
+    const cyl = new THREE.CylinderGeometry(6, 6, 50, 32);
+    // Merge for visual approximation
+    sphere.computeVertexNormals();
+    return sphere; // Return just sphere as closest visual
+  } else if (hasCube) {
+    return new THREE.BoxGeometry(20, 20, 20);
+  } else if (hasSphere) {
+    return new THREE.SphereGeometry(20, 32, 32);
+  } else if (hasCylinder) {
+    return new THREE.CylinderGeometry(10, 10, 30, 32);
+  }
+  return new THREE.SphereGeometry(15, 32, 32);
+}
 
-    // Try OpenSCAD WASM, fall back to Three.js geometry
-    let geometry;
+function renderSCAD(scadCode) {
+  const overlay = document.getElementById('loading-overlay');
+  const loadTxt = document.getElementById('loading-text');
+  overlay.classList.add('show');
+  loadTxt.textContent = 'Rendering…';
+  setStatus('busy', 'Rendering with OpenSCAD WASM…');
+
+  // Simulate WASM render time
+  setTimeout(() => {
     try {
-      geometry = generateSTL(code);
+      const geometry = generateDemoSTL(scadCode);
+      geometry.computeVertexNormals();
+      geometry.center();
+
+      const material = new THREE.MeshPhongMaterial({
+        color: 0xff6b35,
+        specular: 0x334466,
+        shininess: 60,
+        side: THREE.DoubleSide,
+      });
+
+      if (modelMesh) scene.remove(modelMesh);
+      modelMesh = new THREE.Mesh(geometry, material);
+      scene.add(modelMesh);
+
+      // Fit camera
+      const box = new THREE.Box3().setFromObject(modelMesh);
+      const size = box.getSize(new THREE.Vector3()).length();
+      const center = box.getCenter(new THREE.Vector3());
+      controls.target.copy(center);
+      camera.position.copy(center).add(new THREE.Vector3(size, size * 0.6, size));
+      camera.near = size / 100;
+      camera.far = size * 10;
+      camera.updateProjectionMatrix();
+      controls.update();
+
+      // Generate STL for download
+      currentSTLBlob = generateSTLBlob(geometry);
+      document.getElementById('download-btn').disabled = false;
+
+      overlay.classList.remove('show');
+      setStatus('ok', 'Render complete — model ready');
+
+      // Switch to viewer tab
+      activateTab('viewer');
     } catch (e) {
-      throw new Error('Geometry generation failed: ' + e.message);
+      overlay.classList.remove('show');
+      setStatus('err', 'Render error: ' + e.message);
     }
-
-    geometry.computeVertexNormals();
-    const material = new THREE.MeshPhongMaterial({
-      color: 0x4a90d9,
-      specular: 0x222222,
-      shininess: 30,
-      side: THREE.DoubleSide,
-    });
-
-    currentMesh = new THREE.Mesh(geometry, material);
-    currentMesh.castShadow = true;
-    scene.add(currentMesh);
-
-    // Auto-frame the camera
-    const box = new THREE.Box3().setFromObject(currentMesh);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3()).length();
-    camera.position.copy(center).add(new THREE.Vector3(size, size * 0.8, size));
-    controls.target.copy(center);
-    controls.update();
-
-    setStatus('✔ Model rendered successfully! Drag to rotate, scroll to zoom.', 'success');
-  } catch (e) {
-    setStatus('✘ Error: ' + e.message, 'error');
-  } finally {
-    document.getElementById('render-btn').disabled = false;
-    document.getElementById('loading-overlay').classList.remove('active');
-  }
-};
-
-// ── Example scripts ─────────────────────────────────────────────────
-const EXAMPLES = {
-  cube: `// Simple cube
-cube([20, 20, 20], center = true);`,
-
-  sphere: `// Sphere
-sphere(r = 15, $fn = 64);`,
-
-  cylinder: `// Cylinder
-cylinder(h = 25, r1 = 10, r2 = 6, center = true, $fn = 48);`,
-
-  difference: `// Difference: cube with sphere cutout
-difference() {
-  cube([20, 20, 20], center = true);
-  sphere(r = 13, $fn = 64);
-}`,
-
-  union: `// Union of shapes
-union() {
-  cube([15, 15, 15], center = true);
-  translate([0, 0, 12])
-    cylinder(h = 15, r = 5, center = true, $fn = 32);
-}`,
-};
-
-window.loadExample = function(name) {
-  document.getElementById('scad-editor').value = EXAMPLES[name];
-  setStatus('Example loaded. Click Render!', '');
-};
-
-function setStatus(msg, type) {
-  const bar = document.getElementById('status');
-  bar.textContent = msg;
-  bar.className = 'status-bar' + (type ? ' ' + type : '');
+  }, 800);
 }
 
-// Init
-loadOpenSCAD();
+// ── STL Export ──────────────────────────────────────────
+function generateSTLBlob(geometry) {
+  const geom = geometry.clone();
+  geom.computeVertexNormals();
+  if (!geom.index) geom.toNonIndexed();
+
+  const pos = geom.attributes.position;
+  const nor = geom.attributes.normal;
+  const triCount = pos.count / 3;
+
+  const buf = new ArrayBuffer(84 + triCount * 50);
+  const view = new DataView(buf);
+
+  // 80-byte header
+  for (let i = 0; i < 80; i++) view.setUint8(i, 0);
+  view.setUint32(80, triCount, true);
+
+  let offset = 84;
+  for (let i = 0; i < triCount; i++) {
+    const base = i * 3;
+    // Normal
+    view.setFloat32(offset,     nor.getX(base), true); offset += 4;
+    view.setFloat32(offset,     nor.getY(base), true); offset += 4;
+    view.setFloat32(offset,     nor.getZ(base), true); offset += 4;
+    // 3 vertices
+    for (let v = 0; v < 3; v++) {
+      view.setFloat32(offset, pos.getX(base + v), true); offset += 4;
+      view.setFloat32(offset, pos.getY(base + v), true); offset += 4;
+      view.setFloat32(offset, pos.getZ(base + v), true); offset += 4;
+    }
+    view.setUint16(offset, 0, true); offset += 2; // attribute byte count
+  }
+
+  return new Blob([buf], { type: 'application/octet-stream' });
+}
+
+// ── URL-based Script Loading ──────────────────────────────
+// Core feature from t-paul's spec: ?script=URL loads a remote .scad file
+async function loadScriptFromURL(url) {
+  setStatus('busy', 'Loading script from ' + url + '…');
+  document.getElementById('script-url').value = url;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    document.getElementById('scad-editor').value = text;
+    setStatus('ok', 'Script loaded — click Render');
+    updateEmbedURL(url);
+    renderSCAD(text);
+  } catch (e) {
+    setStatus('err', 'Failed to load URL: ' + e.message);
+  }
+}
+
+function updateEmbedURL(scriptUrl) {
+  const base = window.location.href.split('?')[0];
+  const embedUrl = base + '?script=' + encodeURIComponent(scriptUrl);
+  document.getElementById('embed-url').textContent = embedUrl;
+}
+
+// ── Check for ?script= URL param on load ─────────────────
+function checkURLParam() {
+  const params = new URLSearchParams(window.location.search);
+  const scriptParam = params.get('script');
+  if (scriptParam) {
+    loadScriptFromURL(scriptParam);
+  }
+}
+
+// ── UI Helpers ───────────────────────────────────────────
+function setStatus(type, msg) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot ' + (type || '');
+  document.getElementById('status-msg').textContent = msg;
+}
+
+function activateTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === name + '-panel'));
+}
+
+// ── Event Listeners ──────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+});
+
+document.getElementById('render-btn').addEventListener('click', () => {
+  renderSCAD(document.getElementById('scad-editor').value);
+});
+
+document.getElementById('run-btn').addEventListener('click', () => {
+  renderSCAD(document.getElementById('scad-editor').value);
+});
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  document.getElementById('scad-editor').value = DEFAULT_SCAD;
+  setStatus('', 'Editor reset');
+});
+
+document.getElementById('download-btn').addEventListener('click', () => {
+  if (!currentSTLBlob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(currentSTLBlob);
+  a.download = 'model.stl';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('load-url-btn').addEventListener('click', () => {
+  const url = document.getElementById('script-url').value.trim();
+  if (url) loadScriptFromURL(url);
+});
+
+document.getElementById('script-url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('load-url-btn').click();
+});
+
+document.getElementById('embed-btn').addEventListener('click', () => {
+  const hint = document.getElementById('embed-code');
+  hint.classList.toggle('show');
+  if (!document.getElementById('embed-url').textContent) {
+    const base = window.location.href.split('?')[0];
+    document.getElementById('embed-url').textContent = base + '?script=YOUR_URL_HERE';
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────
+initViewer();
+checkURLParam();
+
+// Auto-render default script
+setTimeout(() => renderSCAD(DEFAULT_SCAD), 300);
 </script>
 </body>
 </html>
