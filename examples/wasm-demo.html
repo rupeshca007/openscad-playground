@@ -490,51 +490,53 @@ function displaySTL(stlData) {
 }
 
 // ── WASM Rendering (Real Engine Integration) ──────────────
+// NOTE: Blob-URL workers have location = 'blob:...' NOT the page URL.
+// We pass the real page baseUrl from the main thread inside the message.
 const WORKER_CODE = `
-// Calculate base URL to correctly resolve relative paths in the worker
-const baseUrl = location.origin + location.pathname.substring(0, location.pathname.lastIndexOf('/'));
-
-// Load the official Emscripten JS wrapper
-importScripts(baseUrl + '/wasm/openscad.js');
-
 let instance = null;
 
 onmessage = async function(e) {
-  const scadCode = e.data;
+  const { scadCode, baseUrl } = e.data;
   
   try {
     if (!instance) {
+      // Load the official Emscripten JS wrapper using the URL sent from the page
+      importScripts(baseUrl + '/wasm/openscad.js');
       instance = await OpenSCAD({
         noInitialRun: true,
-        print: text => console.log('OpenSCAD stdout:', text),
-        printErr: text => console.error('OpenSCAD stderr:', text),
-        locateFile: (path, prefix) => baseUrl + '/wasm/' + path
+        print: text => console.log('stdout:', text),
+        printErr: text => console.error('stderr:', text),
+        locateFile: (path) => baseUrl + '/wasm/' + path
       });
     }
 
-    // Write the input script to the virtual filesystem
+    // Write the input script to Emscripten's virtual filesystem
     instance.FS.writeFile('/input.scad', scadCode);
 
-    // Call the OpenSCAD compiler to output a binary STL
+    // Compile to binary STL
     const exitCode = instance.callMain(['--export-format=binstl', '/input.scad', '-o', '/output.stl']);
     
     if (exitCode !== 0) {
-      throw new Error('OpenSCAD compiled with exit code ' + exitCode);
+      throw new Error('OpenSCAD exit code ' + exitCode);
     }
 
-    // Read the binary STL from the virtual filesystem
+    // Read output and transfer binary back to main thread
     const stlData = instance.FS.readFile('/output.stl');
-    
-    // Transfer the ArrayBuffer back to the main thread for max performance
     postMessage({ success: true, stlData: stlData.buffer }, [stlData.buffer]);
   } catch (err) {
-    postMessage({ success: false, error: err.message || err.toString() });
+    postMessage({ success: false, error: err.message || String(err) });
   }
 };
 `;
 
 const workerBlob = new Blob([WORKER_CODE], { type: 'application/javascript' });
 const wasmWorker = new Worker(URL.createObjectURL(workerBlob));
+
+// Compute the correct base URL from the page (not from inside the worker)
+function getBaseUrl() {
+  const href = window.location.href.split('?')[0];
+  return href.substring(0, href.lastIndexOf('/'));
+}
 
 function renderSCAD(scadCode) {
   const overlay = document.getElementById('loading-overlay');
@@ -567,8 +569,8 @@ function renderSCAD(scadCode) {
     setStatus('err', 'Worker error: ' + err.message);
   };
 
-  // Dispatch the source code to the background compilation thread
-  wasmWorker.postMessage(scadCode);
+  // Dispatch scadCode AND the real page baseUrl to the worker
+  wasmWorker.postMessage({ scadCode, baseUrl: getBaseUrl() });
 }
 
 
@@ -665,9 +667,8 @@ document.getElementById('embed-btn').addEventListener('click', () => {
 // ── Init ─────────────────────────────────────────────────
 initViewer();
 checkURLParam();
-
-// Auto-render default script
-setTimeout(() => renderSCAD(DEFAULT_SCAD), 300);
+// Note: No auto-render on load — WASM is 9MB and loads on first Render click
+setStatus('', 'Ready — click ▶ Render or load a .scad URL above');
 </script>
 </body>
 </html>
