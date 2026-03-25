@@ -6,10 +6,15 @@
   <title>OpenSCAD WASM — Minimal Embed Demo</title>
   <meta name="description" content="Minimal embeddable OpenSCAD WASM web component. Load any .scad file via URL, view 3D model, edit and download STL." />
 
-  <!-- Three.js for 3D rendering -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/STLLoader.js"></script>
+  <!-- Three.js for 3D rendering (module imports) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <style>
@@ -391,7 +396,10 @@ difference() {
   <div id="loading-text">Rendering with OpenSCAD WASM…</div>
 </div>
 
-<script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 // ═══════════════════════════════════════════
 // OpenSCAD WASM — Minimal Embed Component
 // Matches t-paul's spec from opencax/GSoC#112
@@ -454,7 +462,7 @@ function resizeRenderer() {
 
 // ── STL Geometry Rendering ──────────────────────────────
 function displaySTL(stlData) {
-  const loader = new THREE.STLLoader();
+  const loader = new STLLoader();
   let geometry;
   if (stlData instanceof ArrayBuffer) {
     geometry = loader.parse(stlData);
